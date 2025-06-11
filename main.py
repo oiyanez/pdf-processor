@@ -12,8 +12,8 @@ async def procesar_pdf(file: UploadFile = File(...)):
         for page in pdf.pages:
             texto = page.extract_text()
             if texto:
-                for linea in texto.split('\\n'):
-                    if '202' in linea:  # puedes refinar esto
+                for linea in texto.split('\n'):
+                    if '202' in linea:
                         partes = linea.split()
                         if len(partes) > 2:
                             data.append({
