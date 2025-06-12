@@ -1,24 +1,28 @@
-from fastapi import FastAPI, UploadFile, File
-import pdfplumber
-import io
+from fastapi import FastAPI, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from PyPDF2 import PdfReader
+from io import BytesIO
 
 app = FastAPI()
 
-@app.post("/procesar")
-async def procesar_pdf(file: UploadFile = File(...)):
+# Habilitar CORS por si conectas desde n8n
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.post("/leer-pdf")
+async def leer_pdf(file: UploadFile = File(...)):
     contenido = await file.read()
-    data = []
-    with pdfplumber.open(io.BytesIO(contenido)) as pdf:
-        for page in pdf.pages:
-            texto = page.extract_text()
-            if texto:
-                for linea in texto.split('\n'):
-                    if '202' in linea:
-                        partes = linea.split()
-                        if len(partes) > 2:
-                            data.append({
-                                "fecha": partes[0],
-                                "descripcion": ' '.join(partes[1:-1]),
-                                "monto": partes[-1]
-                            })
-    return {"items": data}
+    pdf = PdfReader(BytesIO(contenido))
+    texto = ""
+    for page in pdf.pages:
+        texto += page.extract_text() + "\n"
+
+    return {
+        "nombre_archivo": file.filename,
+        "texto": texto
+    }
