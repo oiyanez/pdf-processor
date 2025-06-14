@@ -4,12 +4,16 @@ from PyPDF2 import PdfReader
 from io import BytesIO
 import re
 
-app = FastAPI(title="PDF Processor API", version="1.1")
+app = FastAPI(
+    title="PDF Processor API",
+    description="Extrae texto y depósitos desde un PDF bancario",
+    version="1.1"
+)
 
-# Permitir CORS para llamadas externas (como desde n8n)
+# Configuración CORS para permitir acceso desde n8n u otras apps
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Cambia esto si quieres restringir
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -17,6 +21,9 @@ app.add_middleware(
 
 @app.post("/leer-pdf")
 async def leer_pdf(file: UploadFile = File(...)):
+    """
+    Endpoint principal para cargar un PDF, extraer texto y detectar depósitos.
+    """
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="El archivo debe ser un PDF")
 
@@ -28,7 +35,6 @@ async def leer_pdf(file: UploadFile = File(...)):
         for page in pdf.pages:
             texto += page.extract_text() + "\n"
 
-        # Extraer depósitos con regex
         depositos = extraer_depositos(texto)
 
         return {
@@ -41,32 +47,33 @@ async def leer_pdf(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al procesar el PDF: {str(e)}")
 
+
 def extraer_depositos(texto: str):
     """
-    Extrae líneas de texto que contengan depósitos,
-    asumiendo que aparecen después de 'Detalle de Operaciones'
+    Extrae todos los depósitos (líneas con monto en la columna de depósitos).
     """
     depositos = []
-    pattern = re.compile(r"(?P<fecha>\d{2} \w{3}) (?P<concepto>.+?)\s+(?P<monto>\d{1,3}(?:,\d{3})*(?:\.\d{2}))\s+(?P<saldo>\d{1,3}(?:,\d{3})*(?:\.\d{2}))")
+    lineas = texto.split("\n")
 
-    for match in pattern.finditer(texto):
-        concepto = match.group("concepto").strip()
-        monto = match.group("monto").replace(",", "")
-        saldo = match.group("saldo").replace(",", "")
-
-        # Condición: si monto está en la penúltima columna, asumimos que es un depósito
-        # Por ejemplo: RETIROS VACÍO - MONTO DEPÓSITO PRESENTE
-        try:
-            monto_float = float(monto)
-            saldo_float = float(saldo)
-            if monto_float > 0 and "PAGO RECIBIDO" in concepto.upper() or "ABONO" in concepto.upper():
-                depositos.append({
-                    "fecha": match.group("fecha"),
-                    "concepto": concepto,
-                    "monto": monto_float,
-                    "saldo_final": saldo_float
-                })
-        except:
-            continue
-
+    for linea in lineas:
+        if re.search(r'\d{2} \w{3}', linea):  # Buscar línea con fecha
+            partes = linea.strip().split()
+            if len(partes) >= 4:
+                try:
+                    fecha = partes[0] + " " + partes[1]  # Ej: 20 MAR
+                    # Buscar montos numéricos tipo 15,000.00
+                    numeros = [p for p in partes if re.match(r'^\d{1,3}(?:,\d{3})*(?:\.\d{2})$', p)]
+                    if len(numeros) >= 2:
+                        monto = float(numeros[-2].replace(",", ""))
+                        saldo = float(numeros[-1].replace(",", ""))
+                        concepto = " ".join(partes[2:-2])
+                        if monto > 0:
+                            depositos.append({
+                                "fecha": fecha,
+                                "concepto": concepto,
+                                "monto": monto,
+                                "saldo_final": saldo
+                            })
+                except:
+                    continue
     return depositos
