@@ -1,23 +1,15 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
 
-# Instala dependencias del sistema
+# Tesseract para OCR
 RUN apt-get update && \
-    apt-get install -y poppler-utils tesseract-ocr libtesseract-dev && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+    apt-get install -y tesseract-ocr libsm6 libxrender1 libxext6 poppler-utils && \
+    rm -rf /var/lib/apt/lists/*
 
-# Crea directorio de trabajo
 WORKDIR /app
-
-# Copia archivos al contenedor
-COPY . /app
-
-# Instala dependencias de Python
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Expone el puerto que usará Uvicorn
+COPY app ./app
+
 EXPOSE 8000
-
-# Comando para iniciar el servidor
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
-
-
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
