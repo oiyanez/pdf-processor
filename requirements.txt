@@ -1,5 +1,8 @@
 fastapi
 uvicorn
+pytesseract
 PyMuPDF
 pdf2image
-pytesseract
+Pillow
+python-multipart
+
