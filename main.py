@@ -1,49 +1,78 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from typing import List
-from PIL import Image
+import fitz  # PyMuPDF
+import re
+from pdf2image import convert_from_path
 import pytesseract
-from io import BytesIO
+from datetime import datetime
 
-app = FastAPI()
+# Cambiar a la ruta de Tesseract si no está en PATH (Windows)
+# pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
-# CORS settings para permitir acceso desde cualquier origen (opcional según tu arquitectura)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+def es_pdf_con_texto(pdf_path):
+    doc = fitz.open(pdf_path)
+    for page in doc:
+        if page.get_text().strip():
+            return True
+    return False
 
-@app.get("/")
-def root():
-    return {"message": "Servidor activo para OCR de imágenes"}
+def extraer_texto_pdf(pdf_path):
+    texto_total = ""
+    if es_pdf_con_texto(pdf_path):
+        doc = fitz.open(pdf_path)
+        for page in doc:
+            texto_total += page.get_text()
+    else:
+        imagenes = convert_from_path(pdf_path)
+        for img in imagenes:
+            texto_total += pytesseract.image_to_string(img)
+    return texto_total
 
-@app.post("/leer-imagen")
-async def leer_imagen(file: UploadFile = File(...)):
-    try:
-        # Leer imagen desde archivo cargado
-        image = Image.open(BytesIO(await file.read()))
-        text = pytesseract.image_to_string(image)
+def parsear_operaciones(texto):
+    operaciones = []
+    regex = re.compile(
+        r'(?P<fecha>\d{2}[-/][A-Z]{3}[-/]\d{4})\s+'
+        r'(?P<folio>\d+)\s+'
+        r'(?P<descripcion>.+?)\s+'
+        r'(?:(?P<deposito>\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s+)?'
+        r'(?:(?P<retiro>\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s+)?'
+        r'(?P<saldo>\d{1,3}(?:,\d{3})*(?:\.\d{2})?)',
+        re.DOTALL
+    )
 
-        # Detectar el banco desde el texto
-        banco = "Desconocido"
-        texto_lower = text.lower()
-        if "banamex" in texto_lower:
-            banco = "Banamex"
-        elif "bbva" in texto_lower:
-            banco = "BBVA"
-        elif "santander" in texto_lower:
-            banco = "Santander"
-        elif "hsbc" in texto_lower:
-            banco = "HSBC"
+    for match in regex.finditer(texto):
+        fecha = match.group('fecha').replace('-', '/').replace('ENE', '01').replace('FEB', '02').replace('MAR', '03').replace('ABR', '04').replace('MAY', '05')  # y así sucesivamente
+        try:
+            fecha_formateada = datetime.strptime(fecha, '%d/%m/%Y').strftime('%d/%m/%Y')
+        except:
+            continue
 
-        # Respuesta de ejemplo
+        descripcion = re.sub(r'\s+', ' ', match.group('descripcion')).strip()
+        deposito = float(match.group('deposito').replace(',', '')) if match.group('deposito') else None
+        retiro = float(match.group('retiro').replace(',', '')) if match.group('retiro') else None
+        saldo = float(match.group('saldo').replace(',', ''))
+
+        operaciones.append({
+            "fecha": fecha_formateada,
+            "tipo": "depósito" if deposito else "pago",
+            "monto": deposito if deposito else retiro,
+            "descripcion": descripcion,
+            "saldo_final": saldo
+        })
+
+    return operaciones
+
+def procesar_estado_cuenta(pdf_path, banco="Desconocido"):
+    texto = extraer_texto_pdf(pdf_path)
+    operaciones = parsear_operaciones(texto)
+
+    if all(k in operaciones[0] for k in ["fecha", "tipo", "monto", "descripcion", "saldo_final"]):
         return {
-            "archivo": file.filename,
             "banco": banco,
-            "texto_extraido": text[:500],  # Solo los primeros 500 caracteres
+            "operaciones": operaciones
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al procesar imagen: {str(e)}")
+    else:
+        print("Faltan campos clave en algunas operaciones.")
+        return None
+
+# 👉 Uso del script
+resultado = procesar_estado_cuenta("estado_cuenta.pdf", banco="Santander")
+print(resultado)
