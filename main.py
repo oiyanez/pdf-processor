@@ -1,18 +1,14 @@
-
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from PyPDF2 import PdfReader
 from pdf2image import convert_from_bytes
-from io import BytesIO
 import pytesseract
+from io import BytesIO
 import re
 
-app = FastAPI(
-    title="PDF Processor API",
-    description="Extrae depósitos y pagos desde PDFs bancarios",
-    version="1.0.0",
-)
+app = FastAPI(title="PDF Processor with OCR", version="1.0")
 
+# Permitir CORS si usas Make o n8n externo
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,64 +16,62 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def is_scanned_pdf(file_bytes):
-    try:
-        reader = PdfReader(file_bytes)
-        for page in reader.pages:
-            if page.extract_text():
-                return False
-        return True
-    except:
-        return True
+def extract_text_from_pdf(pdf_bytes: bytes) -> str:
+    reader = PdfReader(BytesIO(pdf_bytes))
+    text = ""
+    for page in reader.pages:
+        if page.extract_text():
+            text += page.extract_text() + "\n"
+    return text.strip()
 
-def extract_text_from_pdf(file_bytes):
-    if is_scanned_pdf(file_bytes):
-        file_bytes.seek(0)
-        images = convert_from_bytes(file_bytes.read())
-        full_text = "\n".join([pytesseract.image_to_string(img) for img in images])
-    else:
-        file_bytes.seek(0)
-        reader = PdfReader(file_bytes)
-        full_text = "\n".join([page.extract_text() for page in reader.pages])
-    return full_text
+def extract_text_with_ocr(pdf_bytes: bytes) -> str:
+    images = convert_from_bytes(pdf_bytes)
+    text = ""
+    for image in images:
+        text += pytesseract.image_to_string(image, lang="spa") + "\n"
+    return text.strip()
 
-def procesar_texto_extraido(texto):
-    # Este patrón se puede adaptar según el banco
-    patron = re.compile(
-        r"(HORA\s+\d{2}:\d{2}|CAJA\s+\d{4})\s+.*?(SUC\s+\d{4}|AUT\s+\d{8})[^\d]*(\d{1,3}(?:,\d{3})*\.\d{2})[^\d]*(\d{1,3}(?:,\d{3})*\.\d{2})",
-        re.MULTILINE
+def parse_transactions(text: str):
+    lines = text.split("\n")
+    results = []
+
+    pattern = re.compile(
+        r"(?P<fecha>\bHORA\s\d{2}:\d{2}|\b\d{2}/\d{2}/\d{4}|\b\d{8})[^\d]*(?P<concepto>CAJA.*?|SUC.*?)\s+.*?(?P<monto>\d{1,3}(?:[\.,]\d{3})*[\.,]\d{2})[^\d]*(?P<saldo>\d{1,3}(?:[\.,]\d{3})*[\.,]\d{2})"
     )
 
-    matches = patron.findall(texto)
-    depositos = []
+    for line in lines:
+        match = pattern.search(line)
+        if match:
+            monto = float(match.group("monto").replace(",", "").replace(".", "", match.group("monto").count(".") - 1))
+            saldo = float(match.group("saldo").replace(",", "").replace(".", "", match.group("saldo").count(".") - 1))
+            results.append({
+                "fecha": match.group("fecha"),
+                "concepto": match.group("concepto").strip(),
+                "monto": monto,
+                "saldo_final": saldo,
+            })
 
-    for match in matches:
-        fecha, concepto, monto, saldo = match
-        try:
-            monto_valor = float(monto.replace(",", ""))
-            saldo_valor = float(saldo.replace(",", ""))
-        except:
-            continue
-        depositos.append({
-            "fecha": fecha,
-            "concepto": concepto,
-            "monto": monto_valor,
-            "saldo_final": saldo_valor
-        })
-
-    return {
-        "archivo": "extraido.pdf",
-        "total_paginas": texto.count("Página") or 1,
-        "total_depositos": len(depositos),
-        "depositos": depositos
-    }
+    return results
 
 @app.post("/leer-pdf")
 async def leer_pdf(file: UploadFile = File(...)):
-    file_content = await file.read()
-    file_bytes = BytesIO(file_content)
+    if not file.filename.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Solo se permiten archivos PDF.")
 
-    texto_extraido = extract_text_from_pdf(file_bytes)
-    resultado = procesar_texto_extraido(texto_extraido)
+    pdf_bytes = await file.read()
 
-    return resultado
+    # Intentar extraer texto normal
+    text = extract_text_from_pdf(pdf_bytes)
+
+    # Si no hay texto, aplicar OCR
+    if len(text.strip()) < 100:
+        text = extract_text_with_ocr(pdf_bytes)
+
+    transacciones = parse_transactions(text)
+
+    return {
+        "archivo": file.filename,
+        "total_paginas": len(PdfReader(BytesIO(pdf_bytes)).pages),
+        "total_depositos": len(transacciones),
+        "depositos": transacciones,
+    }

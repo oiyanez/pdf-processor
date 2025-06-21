@@ -1,29 +1,30 @@
-FROM python:3.11-slim
+# Imagen base con Python 3.10
+FROM python:3.10-slim
 
-# Evita prompts de localización
-ENV DEBIAN_FRONTEND=noninteractive
+# Variables de entorno
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
 
-# Instala dependencias del sistema
+# Instalar dependencias del sistema
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     poppler-utils \
+    libgl1 \
     libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Crea directorio de trabajo
+# Crear directorio de trabajo
 WORKDIR /app
 
-# Copia archivos
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copiar archivos del proyecto
+COPY . /app/
 
-COPY . .
+# Instalar dependencias de Python
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
 
-# Expone el puerto para FastAPI
+# Exponer el puerto FastAPI por defecto
 EXPOSE 8000
 
-# Comando para correr FastAPI
+# Comando para correr el servidor
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
