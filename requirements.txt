@@ -1,7 +1,5 @@
 fastapi
-uvicorn[standard]
-pymupdf
+uvicorn
+PyMuPDF
 pdf2image
 pytesseract
-pillow
-pandas
