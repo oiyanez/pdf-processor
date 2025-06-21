@@ -1,13 +1,13 @@
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 from PIL import Image
 import pytesseract
-import io
-import re
+from io import BytesIO
 
 app = FastAPI()
 
+# CORS settings para permitir acceso desde cualquier origen (opcional según tu arquitectura)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,34 +16,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def extraer_campos(texto: str):
-    lineas = texto.split("\n")
-    resultados = []
-    deposito_regex = re.compile(r"\b\d{1,3}(?:,\d{3})*(?:\.\d{2})\b")
-    fecha_regex = re.compile(r"\d{2}/\d{2}/\d{4}")
-
-    for linea in lineas:
-        if any(p in linea.lower() for p in ["dep", "abono", "pago", "ingreso"]):
-            deposito = deposito_regex.findall(linea)
-            fecha = fecha_regex.search(linea)
-            resultados.append({
-                "fecha": fecha.group() if fecha else None,
-                "concepto": linea,
-                "deposito": float(deposito[0].replace(',', '')) if deposito else 0.0,
-                "saldo_final": float(deposito[1].replace(',', '')) if len(deposito) > 1 else None
-            })
-    return resultados
+@app.get("/")
+def root():
+    return {"message": "Servidor activo para OCR de imágenes"}
 
 @app.post("/leer-imagen")
 async def leer_imagen(file: UploadFile = File(...)):
-    contenido = await file.read()
-    imagen = Image.open(io.BytesIO(contenido))
-    texto_extraido = pytesseract.image_to_string(imagen, lang="spa")
+    try:
+        # Leer imagen desde archivo cargado
+        image = Image.open(BytesIO(await file.read()))
+        text = pytesseract.image_to_string(image)
 
-    datos = extraer_campos(texto_extraido)
+        # Detectar el banco desde el texto
+        banco = "Desconocido"
+        texto_lower = text.lower()
+        if "banamex" in texto_lower:
+            banco = "Banamex"
+        elif "bbva" in texto_lower:
+            banco = "BBVA"
+        elif "santander" in texto_lower:
+            banco = "Santander"
+        elif "hsbc" in texto_lower:
+            banco = "HSBC"
 
-    return {
-        "archivo": file.filename,
-        "banco": "desconocido",  # puedes inferirlo con lógica adicional
-        "datos": datos
-    }
+        # Respuesta de ejemplo
+        return {
+            "archivo": file.filename,
+            "banco": banco,
+            "texto_extraido": text[:500],  # Solo los primeros 500 caracteres
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al procesar imagen: {str(e)}")
