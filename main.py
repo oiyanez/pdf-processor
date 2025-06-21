@@ -6,6 +6,18 @@ import pytesseract
 from io import BytesIO
 import re
 
+@app.post("/leer-pdf")
+async def leer_pdf(data: UploadFile = File(...)):
+    try:
+        print(f"Procesando archivo: {data.filename}")
+        # Continúa tu lógica de PDF...
+        
+    except Exception as e:
+        print(f"❌ Error al procesar PDF: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
 app = FastAPI(title="PDF Processor with OCR", version="1.0")
 
 # Permitir CORS si usas Make o n8n externo
